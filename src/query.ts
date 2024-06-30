@@ -1,4 +1,4 @@
-import BluebirdPromise from 'bluebird';
+
 import { parseArgs, shuffle } from './util';
 import type Model from './model';
 import type Schema from './schema';
@@ -338,13 +338,28 @@ abstract class Query<T> {
    *
    * @param {Object} data
    * @param {Function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  update(data: any, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  async update(data: any, callback?: NodeJSLikeCallback<any>): Promise<any> {
     const model = this._model;
     const stack = this._schema._parseUpdate(data);
 
-    return BluebirdPromise.mapSeries(this.data, item => model._updateWithStack(item._id, stack)).asCallback(callback);
+    // Sequentially process each item in this.data
+    try {
+      const results = await this.data.reduce(async (promiseChain, item) => {
+        await promiseChain;
+        return await model._updateWithStack(item._id, stack);
+      }, Promise.resolve());
+      if (callback) {
+        callback(null, results);
+      }
+      return results;
+    } catch (err_1) {
+      if (callback) {
+        callback(err_1);
+      }
+      throw err_1;
+    }
   }
 
   /**
@@ -352,24 +367,53 @@ abstract class Query<T> {
    *
    * @param {Object} data
    * @param {Function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  replace(data: any, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  async replace(data: any, callback?: NodeJSLikeCallback<any>): Promise<any> {
     const model = this._model;
 
-    return BluebirdPromise.map(this.data, item => model.replaceById(item._id, data)).asCallback(callback);
+    // Sequentially process each item in this.data
+    try {
+      const results = await this.data.reduce(async (promiseChain, item) => {
+        await promiseChain;
+        return await model.replaceById(item._id, data);
+      }, Promise.resolve());
+      if (callback) {
+        callback(null, results);
+      }
+      return results;
+    } catch (err_1) {
+      if (callback) {
+        callback(err_1);
+      }
+      throw err_1;
+    }
   }
 
   /**
    * Remove all documents.
    *
    * @param {Function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  remove(callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  async remove(callback?: NodeJSLikeCallback<any>): Promise<any> {
     const model = this._model;
 
-    return BluebirdPromise.mapSeries(this.data, item => model.removeById(item._id)).asCallback(callback);
+    try {
+      const results = await this.data.reduce(async (promiseChain, item) => {
+        await promiseChain;
+        return await model.removeById(item._id);
+      }, Promise.resolve());
+      if (callback) {
+        callback(null, results);
+      }
+      return results;
+    } catch (err_1) {
+      if (callback) {
+        callback(err_1);
+      }
+      throw err_1;
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import SchemaType from './schematype';
 import * as Types from './types/index';
-import BluebirdPromise from 'bluebird';
+
 import { getProp, setProp, delProp } from './util';
 import PopulationError from './error/population';
 import SchemaTypeVirtual from './types/virtual';
@@ -8,6 +8,7 @@ import { isPlainObject } from 'is-plain-object';
 import type { AddSchemaTypeLoopOptions, AddSchemaTypeOptions, PopulateResult, SchemaTypeOptions } from './types';
 import type Model from './model';
 import type Document from './document';
+import { promisify } from 'util';
 
 /**
  * @callback queryFilterCallback
@@ -50,12 +51,19 @@ const checkHookType = (type: string) => {
   }
 };
 
-const hookWrapper = (fn: (...args: any[]) => void): (...args: any[]) => BluebirdPromise<any> => {
+const hookWrapper = (fn: (...args: any[]) => void): (...args: any[]) => Promise<any> => {
   if (fn.length > 1) {
-    return BluebirdPromise.promisify(fn);
+    return promisify(fn);
   }
+  return (...args: any[]) => new Promise<any>((resolve, reject) => {
+    try {
+      const result = fn(args);
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+  });
 
-  return BluebirdPromise.method(fn);
 };
 
 /**
@@ -387,12 +395,12 @@ class Schema<T = any> {
   methods: Record<string, (this: T, ...args: any[]) => any> = {};
   hooks: {
     pre: {
-      save: ((...args: any[]) => BluebirdPromise<any>)[]
-      remove: ((...args: any[]) => BluebirdPromise<any>)[]
+      save: ((...args: any[]) => Promise<any>)[]
+      remove: ((...args: any[]) => Promise<any>)[]
     };
     post: {
-      save: ((...args: any[]) => BluebirdPromise<any>)[]
-      remove: ((...args: any[]) => BluebirdPromise<any>)[]
+      save: ((...args: any[]) => Promise<any>)[]
+      remove: ((...args: any[]) => Promise<any>)[]
     };
   };
   stacks: {

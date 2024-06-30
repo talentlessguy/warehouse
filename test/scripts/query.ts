@@ -2,7 +2,7 @@ import chai from 'chai';
 const should = chai.should(); // eslint-disable-line
 import lodash from 'lodash';
 const { sortBy } = lodash;
-import Promise from 'bluebird';
+
 import Document from '../../dist/document';
 import Database from '../../dist/database';
 import type Query from '../../dist/query';

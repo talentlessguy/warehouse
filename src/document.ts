@@ -1,7 +1,6 @@
 import rfdc from 'rfdc';
 import type Model from './model';
 import type Schema from './schema';
-import type BluebirdPromise from 'bluebird';
 import type { NodeJSLikeCallback } from './types';
 const cloneDeep = rfdc();
 
@@ -26,9 +25,9 @@ abstract class Document<T> {
    * Saves the document.
    *
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  save(callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  save(callback?: NodeJSLikeCallback<any>): Promise<any> {
     return this._model.save(this, callback);
   }
 
@@ -37,9 +36,9 @@ abstract class Document<T> {
    *
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  update(data: object, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  update(data: object, callback?: NodeJSLikeCallback<any>): Promise<any> {
     return this._model.updateById(this._id, data, callback);
   }
 
@@ -48,9 +47,9 @@ abstract class Document<T> {
    *
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  replace(data: T | Document<T>, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  replace(data: T | Document<T>, callback?: NodeJSLikeCallback<any>): Promise<any> {
     return this._model.replaceById(this._id, data, callback);
   }
 
@@ -58,9 +57,9 @@ abstract class Document<T> {
    * Removes the document.
    *
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  remove(callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  remove(callback?: NodeJSLikeCallback<any>): Promise<any> {
     return this._model.removeById(this._id, callback);
   }
 

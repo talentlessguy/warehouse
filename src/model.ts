@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 import rfdc from 'rfdc';
 const cloneDeep = rfdc();
-import BluebirdPromise from 'bluebird';
 import { parseArgs, getProp, setGetter, shuffle } from './util';
 import Document from './document';
 import Query from './query';
@@ -125,27 +124,41 @@ class Model<T> extends EventEmitter {
   /**
    * Acquires write lock.
    *
-   * @return {BluebirdPromise}
+   * @return {Promise}
    * @private
    */
-  _acquireWriteLock(): BluebirdPromise.Disposer<void> {
+  _acquireWriteLock() {
     const mutex = this._mutex;
 
-    return new BluebirdPromise((resolve, reject) => {
-      mutex.lock(resolve);
-    }).disposer(() => {
-      mutex.unlock();
+    let lockAcquired = false;
+
+    return new Promise<void>((resolve, reject) => {
+      mutex.lock(() => {
+        lockAcquired = true;
+        resolve(); // Resolve the promise once lock is acquired
+      });
+    }).then(() => {
+      // Return an object that will unlock the mutex when disposed
+      return {
+        async dispose() {
+          if (lockAcquired) {
+            mutex.unlock(); // Release the lock
+            lockAcquired = false;
+          }
+        }
+      };
     });
   }
+
 
   /**
    * Inserts a document.
    *
    * @param {Document|object} data
-   * @return {BluebirdPromise}
+   * @return {Promise}
    * @private
    */
-  _insertOne(data_: Document<T> | T): BluebirdPromise<any> {
+  _insertOne(data_: Document<T> | T): Promise<any> {
     const schema = this.schema;
 
     // Apply getters
@@ -154,11 +167,11 @@ class Model<T> extends EventEmitter {
 
     // Check ID
     if (!id) {
-      return BluebirdPromise.reject(new WarehouseError('ID is not defined', WarehouseError.ID_UNDEFINED));
+      return Promise.reject(new WarehouseError('ID is not defined', WarehouseError.ID_UNDEFINED));
     }
 
     if (this.has(id)) {
-      return BluebirdPromise.reject(new WarehouseError('ID `' + id + '` has been used', WarehouseError.ID_EXIST));
+      return Promise.reject(new WarehouseError('ID `' + id + '` has been used', WarehouseError.ID_EXIST));
     }
 
     // Apply setters
@@ -181,22 +194,57 @@ class Model<T> extends EventEmitter {
    *
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  insertOne(data: Document<T> | T, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
-    return BluebirdPromise.using(this._acquireWriteLock(), () => this._insertOne(data)).asCallback(callback);
+  async insertOne(data: Document<T> | T, callback?: NodeJSLikeCallback<any>) {
+    let releaseLock = null;
+
+    try {
+      const lock = await this._acquireWriteLock();
+      releaseLock = lock.dispose;
+      const result_2 = await this._insertOne(data);
+      releaseLock();
+      if (callback) {
+        callback(null, result_2);
+      }
+      return result_2;
+    } catch (err_1) {
+      if (releaseLock) {
+        releaseLock();
+      }
+      if (callback) {
+        callback(err_1);
+      }
+      throw err_1;
+    }
   }
+
 
   /**
    * Inserts documents.
    *
    * @param {object|array} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  insert(data: Document<T> | T | Document<T>[] | T[], callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  insert(data: Document<T> | T | Document<T>[] | T[], callback?: NodeJSLikeCallback<any>): Promise<any> {
     if (Array.isArray(data)) {
-      return BluebirdPromise.mapSeries<Document<T> | T, any>(data, item => this.insertOne(item)).asCallback(callback);
+      return data.reduce(async (promiseChain, item) => {
+        await promiseChain;
+        return await this.insertOne(item);
+      }, Promise.resolve())
+        .then(results => {
+          if (callback) {
+            callback(null, results);
+          }
+          return results;
+        })
+        .catch(err => {
+          if (callback) {
+            callback(err);
+          }
+          throw err;
+        });
     }
 
     return this.insertOne(data, callback);
@@ -207,20 +255,44 @@ class Model<T> extends EventEmitter {
    *
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  save(data: Document<T> | T, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  save(data: Document<T> | T, callback?: NodeJSLikeCallback<any>): Promise<any> {
     const id = (data as any)._id;
 
     if (!id) return this.insertOne(data, callback);
 
-    return BluebirdPromise.using(this._acquireWriteLock(), () => {
-      if (this.has(id)) {
-        return this._replaceById(id, data);
-      }
+    let releaseLock = null;
 
-      return this._insertOne(data);
-    }).asCallback(callback);
+    // Acquire the write lock
+    return this._acquireWriteLock()
+      .then(lock => {
+        releaseLock = lock.dispose; // Store the release function to be called later
+
+        // Perform conditional logic inside the lock
+        if (this.has(id)) {
+          return this._replaceById(id, data);
+        }
+        return this._insertOne(data);
+
+      })
+      .then(result => {
+        releaseLock(); // Release the lock
+        if (callback) {
+          callback(null, result); // Callback with the result
+        }
+        return result; // Return the result for chaining
+      })
+      .catch(err => {
+        if (releaseLock) {
+          releaseLock(); // Always release the lock in case of error
+        }
+        if (callback) {
+          callback(err); // Callback with the error
+        }
+        throw err; // Propagate the error for further handling
+      });
+
   }
 
   /**
@@ -228,16 +300,16 @@ class Model<T> extends EventEmitter {
    *
    * @param {*} id
    * @param {array} stack
-   * @return {BluebirdPromise}
+   * @return {Promise}
    * @private
    */
-  _updateWithStack(id: string | number, stack: ((data: any) => void)[]): BluebirdPromise<any> {
+  _updateWithStack(id: string | number, stack: ((data: any) => void)[]): Promise<any> {
     const schema = this.schema;
 
     const data = this.data[id];
 
     if (!data) {
-      return BluebirdPromise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
+      return Promise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
     }
 
     // Clone data
@@ -271,13 +343,34 @@ class Model<T> extends EventEmitter {
    * @param {*} id
    * @param {object} update
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  updateById(id: string | number, update: object, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
-    return BluebirdPromise.using(this._acquireWriteLock(), () => {
-      const stack = this.schema._parseUpdate(update as object);
-      return this._updateWithStack(id, stack);
-    }).asCallback(callback);
+  updateById(id: string | number, update: object, callback?: NodeJSLikeCallback<any>): Promise<any> {
+    let releaseLock = null;
+
+    return this._acquireWriteLock()
+      .then(lock => {
+        releaseLock = lock.dispose;
+        const stack = this.schema._parseUpdate(update as object);
+        return this._updateWithStack(id, stack);
+      })
+      .then(result => {
+        releaseLock();
+        if (callback) {
+          callback(null, result);
+        }
+        return result;
+      })
+      .catch(err => {
+        if (releaseLock) {
+          releaseLock();
+        }
+        if (callback) {
+          callback(err);
+        }
+        throw err;
+      });
+
   }
 
   /**
@@ -286,9 +379,9 @@ class Model<T> extends EventEmitter {
    * @param {object} query
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  update(query: object, data: object, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  update(query: object, data: object, callback?: NodeJSLikeCallback<any>): Promise<any> {
     return (this.find(query) as Query<T>).update(data, callback);
   }
 
@@ -297,14 +390,14 @@ class Model<T> extends EventEmitter {
    *
    * @param {*} id
    * @param  {object} data
-   * @return {BluebirdPromise}
+   * @return {Promise}
    * @private
    */
-  _replaceById(id: string | number, data_: Document<T> | T): BluebirdPromise<any> {
+  _replaceById(id: string | number, data_: Document<T> | T): Promise<any> {
     const schema = this.schema;
 
     if (!this.has(id)) {
-      return BluebirdPromise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
+      return Promise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
     }
 
     (data_ as any)._id = id;
@@ -332,10 +425,35 @@ class Model<T> extends EventEmitter {
    * @param {*} id
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  replaceById(id: string | number, data: Document<T> | T, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
-    return BluebirdPromise.using(this._acquireWriteLock(), () => this._replaceById(id, data)).asCallback(callback);
+  replaceById(id: string | number, data: Document<T> | T, callback?: NodeJSLikeCallback<any>): Promise<any> {
+    let releaseLock = null;
+
+    return this._acquireWriteLock()
+      .then(lock => {
+        releaseLock = lock;
+        return this._replaceById(id, data);
+      })
+      .then(result => {
+        if (releaseLock) {
+          releaseLock();
+        }
+        if (callback) {
+          callback(null, result);
+        }
+        return result;
+      })
+      .catch(err => {
+        if (releaseLock) {
+          releaseLock();
+        }
+        if (callback) {
+          callback(err);
+        }
+        throw err;
+      });
+
   }
 
   /**
@@ -344,9 +462,9 @@ class Model<T> extends EventEmitter {
    * @param {object} query
    * @param {object} data
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  replace(query: object, data, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  replace(query: object, data, callback?: NodeJSLikeCallback<any>): Promise<any> {
     return (this.find(query) as Query<T>).replace(data, callback);
   }
 
@@ -354,16 +472,16 @@ class Model<T> extends EventEmitter {
    * Finds a document by its identifier and remove it.
    *
    * @param {*} id
-   * @return {BluebirdPromise}
+   * @return {Promise}
    * @private
    */
-  _removeById(id: string | number): BluebirdPromise<any> {
+  _removeById(id: string | number): Promise<any> {
     const schema = this.schema;
 
     const data = this.data[id];
 
     if (!data) {
-      return BluebirdPromise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
+      return Promise.reject(new WarehouseError('ID `' + id + '` does not exist', WarehouseError.ID_NOT_EXIST));
     }
 
     // Pre-hooks
@@ -382,20 +500,44 @@ class Model<T> extends EventEmitter {
    *
    * @param {*} id
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  removeById(id: string | number, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
-    return BluebirdPromise.using(this._acquireWriteLock(), () => this._removeById(id)).asCallback(callback);
+  removeById(id: string | number, callback?: NodeJSLikeCallback<any>) {
+    let releaseLock = null;
+
+    // Acquire the write lock
+    return this._acquireWriteLock()
+      .then(lock => {
+        releaseLock = lock.dispose; // Store the release function to be called later
+        return this._removeById(id); // Perform the removal operation
+      })
+      .then(result => {
+        releaseLock(); // Release the lock
+        if (callback) {
+          callback(null, result); // Callback with the result
+        }
+        return result; // Return the result for chaining
+      })
+      .catch(err => {
+        if (releaseLock) {
+          releaseLock(); // Always release the lock in case of error
+        }
+        if (callback) {
+          callback(err); // Callback with the error
+        }
+        throw err; // Propagate the error for further handling
+      });
   }
+
 
   /**
    * Removes matching documents.
    *
    * @param {object} query
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  remove(query: object, callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  remove(query: object, callback?: NodeJSLikeCallback<any>): Promise<any> {
     return (this.find(query) as Query<T>).remove(callback);
   }
 
@@ -963,11 +1105,14 @@ class Model<T> extends EventEmitter {
 
 Model.prototype.get = Model.prototype.findById;
 
-function execHooks<T>(schema: Schema<T>, type: string, event: string, data: any): BluebirdPromise<any> {
-  const hooks = schema.hooks[type][event] as ((data: any) => BluebirdPromise<void> | void)[];
-  if (!hooks.length) return BluebirdPromise.resolve(data);
+function execHooks<T>(schema: Schema<T>, type: string, event: string, data: any): Promise<any> {
+  const hooks = schema.hooks[type][event] as ((data: any) => Promise<void> | void)[];
+  if (!hooks.length) return Promise.resolve(data);
 
-  return BluebirdPromise.each(hooks, hook => hook(data)).thenReturn(data);
+  return Promise.all(hooks.map(hook => hook(data)))
+    .then(() => data)
+    .catch(err => { throw err; });
+
 }
 
 Model.prototype.size = Model.prototype.count;

@@ -1,12 +1,12 @@
 import chai from 'chai';
 const should = chai.should(); // eslint-disable-line
 import path from 'path';
-import Promise from 'bluebird';
+
 import sinon from 'sinon';
 import Database from '../../dist/database';
 import Model from '../../dist/model';
 import fs from 'fs';
-const promisifyFs = Promise.promisifyAll(fs);
+const promisifyFs = fs.promises;
 
 const DB_PATH = path.join(path.dirname(__dirname), 'fixtures', 'db.json');
 const DB_VERSION = 1;
@@ -85,7 +85,7 @@ describe('Database', () => {
     });
   });
 
-  it('save()', () => db.save().then(() => promisifyFs.readFileAsync(DB_PATH)).then(data => {
+  it('save()', () => db.save().then(() => promisifyFs.readFile(DB_PATH)).then(data => {
     // TODO: fix
     // @ts-ignore
     const json = JSON.parse(data);

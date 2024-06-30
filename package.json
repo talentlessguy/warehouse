@@ -29,7 +29,6 @@
   "author": "Tommy Chen <tommy351@gmail.com> (https://zespia.tw)",
   "license": "MIT",
   "dependencies": {
-    "bluebird": "^3.7.2",
     "graceful-fs": "^4.2.10",
     "hexo-log": "^4.0.1",
     "is-plain-object": "^5.0.0",
@@ -39,7 +38,6 @@
     "through2": "^4.0.2"
   },
   "devDependencies": {
-    "@types/bluebird": "^3.5.37",
     "@types/chai": "^4.3.3",
     "@types/graceful-fs": "^4.1.5",
     "@types/jsonstream": "^0.8.30",

@@ -115,17 +115,28 @@ describe('Document', () => {
     return user;
   }).then(user => User.removeById(user._id)));
 
-  it('populate() - array', () => Comment.insert([
-    {content: 'foo'},
-    {content: 'bar'},
-    {content: 'baz'},
-    {content: 'ha'}
-  ]).then(comments => {
-    const user = User.new({
-      comments: comments.map(comment => comment._id)
-    });
+  it('populate() - array', () => {
+    let savedComments;
 
-    user.populate('comments').comments.toArray().should.eql(comments);
-    return comments;
-  }).map<unknown, any>(comment => Comment.removeById(comment._id)));
+    return Comment.insert([
+      { content: 'foo' },
+      { content: 'bar' },
+      { content: 'baz' },
+      { content: 'ha' }
+    ])
+      .then(comments => {
+        savedComments = comments;
+
+        const user = User.new({
+          comments: comments.map(comment => comment._id)
+        });
+
+        user.populate('comments');
+        user.comments.toArray().should.eql(savedComments);
+
+        return Promise.all(comments.map(comment => Comment.removeById(comment._id)));
+      })
+      .then(() => savedComments);
+  });
+
 });

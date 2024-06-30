@@ -5,7 +5,7 @@ chai.use(chaiAsPromised ); // eslint-disable-line
 
 import lodash from 'lodash';
 const { sortBy } = lodash;
-import Promise from 'bluebird';
+
 import sinon from 'sinon';
 import { nanoid } from 'nanoid';
 import Database from '../../dist/database';

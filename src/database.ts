@@ -1,5 +1,4 @@
 import { parse as createJsonParseStream } from './lib/jsonstream';
-import BluebirdPromise from 'bluebird';
 import { writev, promises as fsPromises, createReadStream } from 'graceful-fs';
 import { pipeline, Stream } from 'stream';
 import Model from './model';
@@ -8,11 +7,12 @@ import SchemaType from './schematype';
 import WarehouseError from './error';
 import { logger } from 'hexo-log';
 import type { AddSchemaTypeOptions, NodeJSLikeCallback } from './types';
+import { promisify } from 'util';
 
 const log = logger();
 const pkg = require('../package.json');
 const { open } = fsPromises;
-const pipelineAsync = BluebirdPromise.promisify(pipeline) as unknown as (...args: Stream[]) => BluebirdPromise<unknown>;
+const pipelineAsync = promisify(pipeline) as unknown as (...args: Stream[]) => Promise<unknown>;
 
 let _writev: (handle: fsPromises.FileHandle, buffers: Buffer[]) => Promise<unknown>;
 
@@ -132,9 +132,9 @@ class Database {
    * Loads database.
    *
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  load(callback?: NodeJSLikeCallback<any>): BluebirdPromise<any> {
+  async load(callback?: NodeJSLikeCallback<any>): Promise<any> {
     const { path, onUpgrade, onDowngrade, version: newVersion } = this.options;
 
     if (!path) throw new WarehouseError('options.path is required');
@@ -159,26 +159,53 @@ class Database {
 
     const rs = createReadStream(path, 'utf8');
 
-    return pipelineAsync(rs, parseStream).then(() => {
-      if (newVersion > oldVersion) {
-        return onUpgrade(oldVersion, newVersion);
-      } else if (newVersion < oldVersion) {
-        return onDowngrade(oldVersion, newVersion);
-      }
-    }).asCallback(callback);
+    return pipelineAsync(rs, parseStream)
+      .then(() => {
+        if (newVersion > oldVersion) {
+          return onUpgrade(oldVersion, newVersion);
+        } else if (newVersion < oldVersion) {
+          return onDowngrade(oldVersion, newVersion);
+        }
+      })
+      .then(result => {
+        if (callback) {
+          callback(null, result);
+        }
+        return result;
+      })
+      .catch(err => {
+        if (callback) {
+          callback(err);
+        }
+        throw err;
+      });
+
   }
 
   /**
    * Saves database.
    *
    * @param {function} [callback]
-   * @return {BluebirdPromise}
+   * @return {Promise}
    */
-  save(callback?: NodeJSLikeCallback<any>): BluebirdPromise<void> {
+  async save(callback?: NodeJSLikeCallback<any>): Promise<void> {
     const { path } = this.options;
 
     if (!path) throw new WarehouseError('options.path is required');
-    return BluebirdPromise.resolve(exportAsync(this, path)).asCallback(callback);
+    return Promise.resolve(exportAsync(this, path))
+      .then(result => {
+        if (callback) {
+          callback(null, result);
+        }
+        return result;
+      })
+      .catch(err => {
+        if (callback) {
+          callback(err);
+        }
+        throw err;
+      });
+
   }
 
   toJSON(): { meta: { version: number, warehouse: string }, models: Record<string, Model<any>> } {
